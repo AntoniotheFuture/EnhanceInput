@@ -25,12 +25,15 @@ class OpenAIAdvisor(AdvisorInterface):
     def get_text_suggestions(self, text) -> Optional[List[str]]:
         """调用OpenAI API获取建议"""
         try:
+            if not text.strip():
+                raise ValueError("输入文本不能为空")
+
+            if not self.api_key:
+                raise ValueError("OpenAI API密钥未配置")
 
             client = openai.OpenAI(api_key=self.api_key, base_url=self.endpoint)
 
-            prompt = (
-                self.prompt
-            )
+            prompt = self.prompt.replace("<text>", text)
 
             response = client.chat.completions.create(
                 model=self.model,
@@ -45,9 +48,20 @@ class OpenAIAdvisor(AdvisorInterface):
             content = response.choices[0].message.content
             suggestions = [s.strip() for s in content.split("\n") if s.strip()]
 
-            logging.debug(f"从OpenAI获取的原始响应: {content}")
-            return suggestions[:3]  # 只返回前三个建议
+            if not suggestions:
+                raise ValueError("API返回了空建议")
 
+            logging.debug(f"从OpenAI获取的原始响应: {content}")
+            return suggestions[:3]
+
+        except openai.AuthenticationError:
+            error_msg = "OpenAI认证失败，请检查API密钥"
+            logging.error(error_msg)
+            raise ValueError(error_msg)
+        except openai.APIConnectionError:
+            error_msg = "连接OpenAI API失败，请检查网络和端点配置"
+            logging.error(error_msg)
+            raise ValueError(error_msg)
         except Exception as e:
             logging.error(f"OpenAI API调用失败: {str(e)}", exc_info=True)
             raise

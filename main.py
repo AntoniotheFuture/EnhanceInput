@@ -7,7 +7,7 @@ from typing import List, Optional
 
 import keyboard
 import pyperclip
-from PyQt5.QtCore import QSharedMemory
+from PyQt5.QtCore import QSharedMemory, QThread, pyqtSignal
 from PyQt5.QtWidgets import QMessageBox, QApplication
 
 from Advisors.OpenAIAdvisor import OpenAIAdvisor
@@ -111,7 +111,13 @@ class TextEnhancerApp(QApplication):
 
                 # 显示窗口并获取建议
                 self.signals.getting_suggestions.emit(self.selected_text)
-                threading.Thread(target=self.get_suggestions, daemon=True).start()
+                # threading.Thread(target=self.get_suggestions, daemon=True).start()
+
+                # 使用QThread代替普通线程
+                self.worker = SuggestionWorker(self.selected_text, self.config)
+                self.worker.finished.connect(self.on_suggestions_ready)
+                self.worker.error.connect(self.on_suggestion_error)
+                self.worker.start()
 
             except Exception as e:
                 self.main_window.show_status(f"错误: {str(e)}", error=True)
@@ -124,6 +130,12 @@ class TextEnhancerApp(QApplication):
         except Exception as e:
             logging.error(f"快捷键回调出错: {str(e)}")
             self.main_window.show_status(f"系统错误: {str(e)}", error=True)
+
+    def on_suggestions_ready(self, suggestions: list):
+        self.main_window.show_suggestions(suggestions)
+
+    def on_suggestion_error(self, text: str):
+        self.main_window.show_status(text, True)
 
     def get_suggestions(self):
         """调用API获取建议"""
@@ -175,6 +187,31 @@ class TextEnhancerApp(QApplication):
             logging.error(f"应用程序运行时出错: {str(e)}", exc_info=True)
         finally:
             logging.info("应用程序退出")
+
+
+class SuggestionWorker(QThread):
+    finished = pyqtSignal(list)
+    error = pyqtSignal(str)
+
+    def __init__(self, selected_text, config):
+        super().__init__()
+        self.selected_text = selected_text
+        self.config = config
+
+    def run(self):
+        try:
+            api_key = self.config.get("openai", "api_key")
+            model = self.config.get("openai", "model")
+            temperature = self.config.getfloat("openai", "temperature")
+            base_url = self.config.get("openai", "endpoint")
+            prompt = self.config.get("settings", "prompt")
+            prompt = prompt.replace("<text>", self.selected_text)
+
+            openai_advisor = OpenAIAdvisor(api_key, model, temperature, base_url, prompt)
+            suggestions = openai_advisor.get_text_suggestions(self.selected_text)
+            self.finished.emit(suggestions)
+        except Exception as e:
+            self.error.emit(str(e))
 
 def main():
     # 确保单实例运行

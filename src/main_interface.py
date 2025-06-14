@@ -49,7 +49,6 @@ class MainInterface(QMainWindow):
         # 原始文本显示
         self.original_text = QTextEdit()
         self.original_text.setFixedHeight(60)
-        self.original_text.setReadOnly(True)
         self.layout.addWidget(self.original_text)
 
         # 建议标签
@@ -74,26 +73,6 @@ class MainInterface(QMainWindow):
 
     @pyqtSlot(str)
     def getting_suggestions(self, text: str):
-        """显示窗口并设置文本"""
-        try:
-            self.original_text.clear()
-            self.original_text.setText(text)
-            self.clear_suggestions()
-
-            logging.info("正在生成建议...")
-            loading_label = QLabel("正在生成建议...")
-            loading_label.setAlignment(Qt.AlignCenter)
-            self.suggestions_layout.addWidget(loading_label)
-
-            self.show_window()
-
-            self.position_window_near_cursor()
-
-        except Exception as e:
-            logging.error(f"显示窗口时出错: {str(e)}")
-            raise
-
-    def show_window_with_text(self, text: str):
         """显示窗口并设置文本"""
         try:
             self.original_text.clear()
@@ -147,12 +126,28 @@ class MainInterface(QMainWindow):
         try:
             self.clear_suggestions()
 
+            if not suggestions:
+                self.show_status("未获取到有效建议", True)
+                return
+
             for i, suggestion in enumerate(suggestions, 1):
                 h_layout = QHBoxLayout()
 
+                # 创建建议按钮
                 btn = QPushButton(suggestion)
+                btn.setStyleSheet("""
+                    QPushButton {
+                        text-align: left;
+                        padding: 5px;
+                        border: 1px solid #ccc;
+                        border-radius: 3px;
+                    }
+                    QPushButton:hover {
+                        background-color: #f0f0f0;
+                    }
+                """)
                 btn.clicked.connect(lambda _, s=suggestion: self.pick_suggestion(s))
-                h_layout.addWidget(btn)
+                h_layout.addWidget(btn, stretch=1)
 
                 widget = QWidget()
                 widget.setLayout(h_layout)
@@ -166,17 +161,37 @@ class MainInterface(QMainWindow):
 
     def clear_suggestions(self):
         """清除所有建议"""
-        logging.debug("清除所有建议")
         try:
-            # 清除布局中的所有部件
+            logging.debug("清除所有建议")
+            # 获取布局中的所有项目
+            items = []
             while self.suggestions_layout.count():
                 item = self.suggestions_layout.takeAt(0)
-                widget = item.widget()
-                if widget:
-                    widget.deleteLater()
+                if item.widget():
+                    items.append(item.widget())
+                elif item.layout():
+                    # 递归清除子布局
+                    self._clear_layout(item.layout())
+
+            # 安全删除所有部件
+            for widget in items:
+                widget.setParent(None)
+                widget.deleteLater()
+
         except Exception as e:
             logging.error(f"清除建议时出错: {str(e)}")
             raise
+
+    def _clear_layout(self, layout):
+        """递归清除布局"""
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.setParent(None)
+                widget.deleteLater()
+            elif item.layout():
+                self._clear_layout(item.layout())
 
     def pick_suggestion(self, suggestion):
         """使用选中的建议替换原文本"""
