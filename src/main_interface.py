@@ -1,10 +1,11 @@
 import logging
 
 import pyperclip
-from PyQt5.QtCore import Qt, pyqtSlot
-from PyQt5.QtGui import QCursor
+from PyQt5.QtCore import Qt, pyqtSlot, QRectF
+from PyQt5.QtGui import QCursor, QColor, QPainterPath, QPainter
 from PyQt5.QtWidgets import QMainWindow, QPushButton, QVBoxLayout, QWidget, QFrame, QLabel, QTextEdit, QDesktopWidget, \
-    QHBoxLayout
+    QHBoxLayout, QGraphicsDropShadowEffect
+
 
 class MainInterface(QMainWindow):
 
@@ -18,24 +19,51 @@ class MainInterface(QMainWindow):
         self.suggestions_frame = None
         self.main_frame = None
         self.main_app = main_app
+
+        # 设置无边框和背景透明
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
         self.init_ui()
+        self.init_custom_title_bar()
 
         self.main_app.signals.getting_suggestions.connect(self.getting_suggestions)
         self.main_app.signals.show_status.connect(self.show_status)
         self.main_app.signals.show_suggestions.connect(self.show_suggestions)
 
+        self.current_selected_index = -1  # 当前选中按钮的索引
+        self.suggestion_buttons = []  # 存储所有建议按钮
+
     def init_ui(self):
         self.setWindowTitle('文本增强')
         self.setGeometry(100, 100, 800, 600)
-        self.setWindowFlags(Qt.WindowStaysOnTopHint)
 
-        # 主框架
-        self.main_frame = QFrame()
-        self.setCentralWidget(self.main_frame)
+        # 主容器Widget - 用于实现圆角
+        self.main_container = QWidget()
+        self.main_container.setObjectName("mainContainer")
+        self.main_container.setStyleSheet("""
+            #mainContainer {
+                background: white;
+                border-radius: 15px;
+            }
+        """)
+        self.setCentralWidget(self.main_container)
+
+        # 添加阴影效果
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(15)
+        shadow.setColor(QColor(0, 0, 0, 150))
+        shadow.setOffset(0, 0)
+        self.main_container.setGraphicsEffect(shadow)
+
+        # 主布局
+        self.layout = QVBoxLayout(self.main_container)
+        self.layout.setContentsMargins(15, 15, 15, 15)  # 留出圆角空间
+
+        self.main_container.setLayout(self.layout)
 
         # 使用垂直布局管理器
-        self.layout = QVBoxLayout()
-        self.main_frame.setLayout(self.layout)
+        # self.layout = QVBoxLayout()
+        # self.main_frame.setLayout(self.layout)
 
         # 打开配置按钮
         btn = QPushButton('打开配置')
@@ -67,6 +95,89 @@ class MainInterface(QMainWindow):
         self.layout.addWidget(self.status_label, alignment=Qt.AlignBottom)
 
         logging.info("用户界面设置完成")
+
+    def init_custom_title_bar(self):
+        """初始化自定义标题栏"""
+        title_bar = QWidget()
+        title_bar.setFixedHeight(40)
+        title_bar.setStyleSheet("background: transparent;")
+
+        title_layout = QHBoxLayout(title_bar)
+        title_layout.setContentsMargins(10, 0, 10, 0)
+
+        # 标题文字
+        self.title_label = QLabel("文本增强工具")
+        self.title_label.setStyleSheet("""
+            QLabel {
+                font-size: 14px;
+                font-weight: bold;
+                color: #333;
+            }
+        """)
+
+        # 空白区域用于拖动
+        self.drag_widget = QWidget()
+        self.drag_widget.setStyleSheet("background: transparent;")
+
+        # 关闭按钮
+        close_btn = QPushButton("×")
+        close_btn.setFixedSize(30, 30)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                border: none;
+                font-size: 18px;
+                color: #999;
+                background: transparent;
+            }
+            QPushButton:hover {
+                color: #333;
+                background: #f0f0f0;
+                border-radius: 15px;
+            }
+        """)
+        close_btn.clicked.connect(self.hide)
+
+        title_layout.addWidget(self.title_label)
+        title_layout.addWidget(self.drag_widget, 1)  # 可拉伸的空白区域
+        title_layout.addWidget(close_btn)
+
+        # 将标题栏添加到主布局顶部
+        self.layout.insertWidget(0, title_bar)
+
+        # 拖动窗口的变量
+        self.drag_position = None
+
+    def mousePressEvent(self, event):
+        """鼠标按下事件 - 开始拖动"""
+        if event.button() == Qt.LeftButton:
+            self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        """鼠标移动事件 - 拖动窗口"""
+        if self.drag_position and event.buttons() == Qt.LeftButton:
+            self.move(event.globalPos() - self.drag_position)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        """鼠标释放事件 - 结束拖动"""
+        self.drag_position = None
+        event.accept()
+
+    def paintEvent(self, event):
+        """绘制圆角窗口"""
+        path = QPainterPath()
+        rect = self.rect()  # 获取QRect
+        rectf = QRectF(rect)  # 转换为QRectF
+        path.addRoundedRect(rectf, 15, 15)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(240, 240, 240, 200))  # 半透明背景
+        painter.drawPath(path)
+
+        painter.end()
 
     def open_config_dialog(self):
         self.main_app.show_config_window()
@@ -125,58 +236,133 @@ class MainInterface(QMainWindow):
         """在UI中显示建议"""
         try:
             self.clear_suggestions()
-
-            if not suggestions:
-                self.show_status("未获取到有效建议", True)
-                return
+            self.suggestion_buttons.clear()
+            self.current_selected_index = -1
 
             for i, suggestion in enumerate(suggestions, 1):
                 h_layout = QHBoxLayout()
 
                 # 创建建议按钮
                 btn = QPushButton(suggestion)
+                btn.setObjectName(f"suggestionBtn_{i}")
                 btn.setStyleSheet("""
                     QPushButton {
                         text-align: left;
                         padding: 5px;
                         border: 1px solid #ccc;
                         border-radius: 3px;
+                        background: white;
                     }
                     QPushButton:hover {
                         background-color: #f0f0f0;
                     }
+                    QPushButton:focus {
+                        background-color: #e0e0e0;
+                        border: 1px solid #999;
+                    }
                 """)
                 btn.clicked.connect(lambda _, s=suggestion: self.pick_suggestion(s))
-                h_layout.addWidget(btn, stretch=1)
 
+                # 添加到布局
+                h_layout.addWidget(btn)
                 widget = QWidget()
                 widget.setLayout(h_layout)
                 self.suggestions_layout.addWidget(widget)
 
+                # 存储按钮引用
+                self.suggestion_buttons.append(btn)
+
+            # 默认选中第一个
+            if self.suggestion_buttons:
+                self.select_suggestion(0)
+
             self.adjustSize()
-            logging.debug("建议已显示在UI中")
+
         except Exception as e:
             logging.error(f"显示建议时出错: {str(e)}")
             raise
 
+    def select_suggestion(self, index):
+        """选择指定索引的建议"""
+        if not self.suggestion_buttons:
+            return
+
+        # 取消之前的选择
+        if 0 <= self.current_selected_index < len(self.suggestion_buttons):
+            btn = self.suggestion_buttons[self.current_selected_index]
+            btn.setStyleSheet("""
+                QPushButton {
+                    text-align: left;
+                    padding: 5px;
+                    border: 1px solid #ccc;
+                    border-radius: 3px;
+                    background: white;
+                }
+            """)
+
+        # 设置新的选择
+        self.current_selected_index = index % len(self.suggestion_buttons)
+        btn = self.suggestion_buttons[self.current_selected_index]
+        btn.setStyleSheet("""
+            QPushButton {
+                text-align: left;
+                padding: 5px;
+                border: 1px solid #999;
+                border-radius: 3px;
+                background: #e0e0e0;
+            }
+        """)
+        btn.setFocus()
+
+    def keyPressEvent(self, event):
+        """键盘事件处理"""
+        if event.key() == Qt.Key_Escape:
+            self.hide()
+            event.accept()
+            return
+        # 只在有建议按钮且焦点不在输入框时处理
+        if self.suggestion_buttons and not self.original_text.hasFocus():
+            if event.key() == Qt.Key_Up:
+                self.select_suggestion(self.current_selected_index - 1)
+                event.accept()
+                return
+            elif event.key() == Qt.Key_Down:
+                self.select_suggestion(self.current_selected_index + 1)
+                event.accept()
+                return
+            elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+                if 0 <= self.current_selected_index < len(self.suggestion_buttons):
+                    btn = self.suggestion_buttons[self.current_selected_index]
+                    btn.click()
+                    event.accept()
+                    return
+
+        super().keyPressEvent(event)
+
     def clear_suggestions(self):
         """清除所有建议"""
         try:
+            self.suggestion_buttons.clear()
+            self.current_selected_index = -1
+
             logging.debug("清除所有建议")
             # 获取布局中的所有项目
-            items = []
+            # items = []
             while self.suggestions_layout.count():
                 item = self.suggestions_layout.takeAt(0)
-                if item.widget():
-                    items.append(item.widget())
-                elif item.layout():
-                    # 递归清除子布局
-                    self._clear_layout(item.layout())
+                widget = item.widget()
+                if widget:
+                    widget.deleteLater()
+                # if item.widget():
+                #     items.append(item.widget())
+                # elif item.layout():
+                #     # 递归清除子布局
+                #     self._clear_layout(item.layout())
 
             # 安全删除所有部件
-            for widget in items:
-                widget.setParent(None)
-                widget.deleteLater()
+            # for widget in items:
+            #     widget.setParent(None)
+            #     widget.deleteLater()
 
         except Exception as e:
             logging.error(f"清除建议时出错: {str(e)}")
